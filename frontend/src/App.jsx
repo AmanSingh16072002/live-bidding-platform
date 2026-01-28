@@ -7,6 +7,9 @@ const API_URL =
 
 const socket = io(API_URL);
 
+fetch(`${API_URL}/items`)
+
+
 
 function App() {
   const [items, setItems] = useState([]);
