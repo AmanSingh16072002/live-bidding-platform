@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Socket Test</title>
+</head>
+<body>
+
+  <h2>Live Bid Test</h2>
+
+  <button onclick="sendBid()">Bid +1000</button>
+
+  <pre id="log"></pre>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+  <script>
+    const log = (msg) => {
+      document.getElementById("log").innerText += msg + "\n";
+    };
+
+    const socket = io("http://localhost:5000");
+
+    socket.on("connect", () => {
+      log("Connected: " + socket.id);
+    });
+
+    socket.on("UPDATE_BID", (data) => {
+      log("Updated: " + JSON.stringify(data));
+    });
+
+    socket.on("OUTBID", () => {
+      log("You are outbid!");
+    });
+
+    socket.on("BID_ERROR", (msg) => {
+      log("Error: " + msg);
+    });
+
+    function sendBid() {
+      socket.emit("BID_PLACED", {
+        itemId: "1",
+        bidAmount: 52000 + Math.floor(Math.random() * 1000),
+      });
+    }
+  </script>
+
+</body>
+</html>
