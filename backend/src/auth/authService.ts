@@ -2,16 +2,24 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { pool } from '../db/pool.js';
 
-export async function register(email, password, role) {
+type Role = 'seller' | 'bidder';
+
+interface User {
+  id: string;
+  email: string;
+  role: Role;
+}
+
+export async function register(email: string, password: string, role: Role): Promise<User> {
   const hash = await bcrypt.hash(password, 12);
   const { rows } = await pool.query(
     `INSERT INTO users(email, password_hash, role) VALUES($1,$2,$3) RETURNING id, email, role`,
     [email, hash, role]
   );
-  return rows[0];
+  return rows[0] as User;
 }
 
-export async function login(email, password) {
+export async function login(email: string, password: string): Promise<{ token: string; user: User }> {
   const { rows } = await pool.query(
     `SELECT * FROM users WHERE email=$1`,
     [email]
@@ -24,8 +32,8 @@ export async function login(email, password) {
 
   const token = jwt.sign(
     { sub: user.id, email: user.email, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN }
+    process.env.JWT_SECRET as string,
+    { expiresIn: process.env.JWT_EXPIRES_IN ?? '7d' }
   );
 
   return {

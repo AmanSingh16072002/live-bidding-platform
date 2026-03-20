@@ -10,5 +10,5 @@ export const subscriber = new Redis({
   port: 6380,
 });
 
-publisher.on('error', (err) => console.error('Redis publisher error:', err));
-subscriber.on('error', (err) => console.error('Redis subscriber error:', err));
+publisher.on('error', (err: Error) => console.error('Redis publisher error:', err));
+subscriber.on('error', (err: Error) => console.error('Redis subscriber error:', err));

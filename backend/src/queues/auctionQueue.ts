@@ -1,34 +1,35 @@
-import { Queue, Worker } from 'bullmq';
+import { Queue, Worker, Job } from 'bullmq';
 import nodemailer from 'nodemailer';
 import { pool } from '../db/pool.js';
+
+interface AuctionExpiredJob {
+  auctionId: string;
+  auctionTitle: string;
+}
 
 const connection = {
   host: 'localhost',
   port: 6380,
 };
 
-// Queue
 export const auctionQueue = new Queue('auction-expiry', { connection });
 
-// Email transporter (using Gmail or any SMTP)
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST,
-  port: process.env.SMTP_PORT,
+  port: Number(process.env.SMTP_PORT),
   auth: {
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
 });
 
-// Worker — processes jobs when auction expires
 export const auctionWorker = new Worker(
   'auction-expiry',
-  async (job) => {
+  async (job: Job<AuctionExpiredJob>) => {
     const { auctionId, auctionTitle } = job.data;
 
     console.log(`Processing expiry for auction: ${auctionTitle}`);
 
-    // Find the highest bid for this auction
     const { rows } = await pool.query(
       `SELECT b.amount, b.bidder_id, u.email
        FROM bids b
@@ -44,10 +45,9 @@ export const auctionWorker = new Worker(
       return;
     }
 
-    const winner = rows[0];
+    const winner = rows[0] as { amount: number; bidder_id: string; email: string };
     console.log(`Winner: ${winner.email} with ₹${winner.amount}`);
 
-    // Send winner email
     await transporter.sendMail({
       from: process.env.SMTP_USER,
       to: winner.email,
@@ -65,10 +65,10 @@ export const auctionWorker = new Worker(
   { connection }
 );
 
-auctionWorker.on('completed', (job) => {
+auctionWorker.on('completed', (job: Job) => {
   console.log(`Auction expiry job ${job.id} completed`);
 });
 
-auctionWorker.on('failed', (job, err) => {
-  console.error(`Auction expiry job ${job.id} failed:`, err.message);
+auctionWorker.on('failed', (job: Job | undefined, err: Error) => {
+  console.error(`Auction expiry job ${job?.id} failed:`, err.message);
 });
