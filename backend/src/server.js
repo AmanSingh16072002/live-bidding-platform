@@ -8,6 +8,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import jwt from "jsonwebtoken";
 import authRouter from "./auth/authRouter.js";
+import { publisher, subscriber } from "./redis/pubsub.js";
+import { pool } from "./db/pool.js";
 
 const app = express();
 
@@ -17,8 +19,6 @@ const __dirname = path.dirname(__filename);
 app.use(express.static(path.join(__dirname, "public")));
 app.use(cors());
 app.use(express.json());
-
-// Auth routes
 app.use("/auth", authRouter);
 
 const server = http.createServer(app);
@@ -31,7 +31,6 @@ const io = new Server(server, {
 io.use((socket, next) => {
   const token = socket.handshake.auth?.token;
   if (!token) return next(new Error("Authentication required"));
-
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     socket.data.user = payload;
@@ -68,7 +67,10 @@ createItems();
 setInterval(() => {
   console.log("Resetting auctions...");
   createItems();
-  io.emit("RESET_ITEMS", Array.from(items.values()));
+  publisher.publish("auction:events", JSON.stringify({
+    type: "RESET_ITEMS",
+    data: Array.from(items.values()),
+  }));
 }, 5 * 60 * 1000);
 
 app.get("/items", (req, res) => {
@@ -78,13 +80,29 @@ app.get("/items", (req, res) => {
   });
 });
 
+/* -------------------- REDIS SUBSCRIBER -------------------- */
+
+// Subscribe to auction events channel
+await subscriber.subscribe("auction:events");
+
+// When a message arrives on the channel, broadcast to all socket clients
+subscriber.on("message", (channel, message) => {
+  if (channel !== "auction:events") return;
+  const event = JSON.parse(message);
+
+  if (event.type === "UPDATE_BID") {
+    io.emit("UPDATE_BID", event.data);
+  } else if (event.type === "RESET_ITEMS") {
+    io.emit("RESET_ITEMS", event.data);
+  }
+});
+
 /* -------------------- SOCKET LOGIC -------------------- */
 
 io.on("connection", (socket) => {
   console.log(`User connected: ${socket.id} | role: ${socket.data.user?.role}`);
 
   socket.on("BID_PLACED", async (data) => {
-    // Only bidders can place bids
     if (socket.data.user?.role !== "bidder") {
       socket.emit("BID_ERROR", "Only bidders can place bids");
       return;
@@ -100,10 +118,22 @@ io.on("connection", (socket) => {
       if (bidAmount <= item.currentBid) { socket.emit("OUTBID"); return; }
 
       item.currentBid = bidAmount;
-      item.highestBidder = socket.data.user.sub; // user ID now, not socket.id
+      item.highestBidder = socket.data.user.sub;
+
+      // Persist bid to PostgreSQL
+      await pool.query(
+        `INSERT INTO bids(auction_id, bidder_id, amount) VALUES($1,$2,$3)`,
+        [itemId, socket.data.user.sub, bidAmount]
+      );
 
       console.log(`New bid on ${item.title}: ₹${bidAmount} by ${socket.data.user.email}`);
-      io.emit("UPDATE_BID", item);
+
+      // Publish to Redis instead of direct io.emit
+      await publisher.publish("auction:events", JSON.stringify({
+        type: "UPDATE_BID",
+        data: item,
+      }));
+
     } catch (err) {
       console.error(err);
       socket.emit("BID_ERROR", "Something went wrong");
