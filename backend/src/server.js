@@ -10,6 +10,7 @@ import jwt from "jsonwebtoken";
 import authRouter from "./auth/authRouter.js";
 import { publisher, subscriber } from "./redis/pubsub.js";
 import { pool } from "./db/pool.js";
+import { auctionQueue, auctionWorker } from './queues/auctionQueue.js';
 
 const app = express();
 
@@ -45,28 +46,37 @@ io.use((socket, next) => {
 const items = new Map();
 const mutex = new Mutex();
 
-function createItems() {
+async function createItems() {
   items.clear();
-  items.set("1", {
-    id: "1",
-    title: "MacBook Pro",
-    currentBid: 50000,
-    endTime: Date.now() + 5 * 60 * 1000,
-    highestBidder: null,
-  });
-  items.set("2", {
-    id: "2",
-    title: "iPhone 15",
-    currentBid: 30000,
-    endTime: Date.now() + 5 * 60 * 1000,
-    highestBidder: null,
-  });
-}
-createItems();
 
-setInterval(() => {
+  const auctions = [
+    { id: "1", title: "MacBook Pro", currentBid: 50000 },
+    { id: "2", title: "iPhone 15", currentBid: 30000 },
+  ];
+
+  for (const auction of auctions) {
+    const endTime = Date.now() + 5 * 60 * 1000;
+    items.set(auction.id, {
+      ...auction,
+      endTime,
+      highestBidder: null,
+    });
+
+    await auctionQueue.add(
+      'auction-expired',
+      { auctionId: auction.id, auctionTitle: auction.title },
+      { delay: 5 * 60 * 1000, jobId: `expiry-${auction.id}-${Date.now()}` }
+    );
+
+    console.log(`Scheduled expiry job for: ${auction.title}`);
+  }
+}
+
+await createItems();
+
+setInterval(async () => {
   console.log("Resetting auctions...");
-  createItems();
+  await createItems();
   publisher.publish("auction:events", JSON.stringify({
     type: "RESET_ITEMS",
     data: Array.from(items.values()),
@@ -82,10 +92,8 @@ app.get("/items", (req, res) => {
 
 /* -------------------- REDIS SUBSCRIBER -------------------- */
 
-// Subscribe to auction events channel
 await subscriber.subscribe("auction:events");
 
-// When a message arrives on the channel, broadcast to all socket clients
 subscriber.on("message", (channel, message) => {
   if (channel !== "auction:events") return;
   const event = JSON.parse(message);
@@ -120,7 +128,6 @@ io.on("connection", (socket) => {
       item.currentBid = bidAmount;
       item.highestBidder = socket.data.user.sub;
 
-      // Persist bid to PostgreSQL
       await pool.query(
         `INSERT INTO bids(auction_id, bidder_id, amount) VALUES($1,$2,$3)`,
         [itemId, socket.data.user.sub, bidAmount]
@@ -128,7 +135,6 @@ io.on("connection", (socket) => {
 
       console.log(`New bid on ${item.title}: ₹${bidAmount} by ${socket.data.user.email}`);
 
-      // Publish to Redis instead of direct io.emit
       await publisher.publish("auction:events", JSON.stringify({
         type: "UPDATE_BID",
         data: item,
