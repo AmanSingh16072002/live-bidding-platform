@@ -49,26 +49,40 @@ const mutex = new Mutex();
 async function createItems() {
   items.clear();
 
+  await pool.query(`DELETE FROM bids`);
+  await pool.query(`DELETE FROM auctions`);
+
   const auctions = [
-    { id: "1", title: "MacBook Pro", currentBid: 50000 },
-    { id: "2", title: "iPhone 15", currentBid: 30000 },
+    { title: "MacBook Pro", start_price: 50000 },
+    { title: "iPhone 15", start_price: 30000 },
   ];
 
   for (const auction of auctions) {
-    const endTime = Date.now() + 5 * 60 * 1000;
-    items.set(auction.id, {
-      ...auction,
-      endTime,
+    const endTime = new Date(Date.now() + 5 * 60 * 1000);
+
+    const { rows } = await pool.query(
+      `INSERT INTO auctions(title, start_price, end_time)
+       VALUES($1, $2, $3) RETURNING id, title, start_price`,
+      [auction.title, auction.start_price, endTime]
+    );
+
+    const dbAuction = rows[0];
+
+    items.set(dbAuction.id, {
+      id: dbAuction.id,
+      title: dbAuction.title,
+      currentBid: Number(dbAuction.start_price),
+      endTime: endTime.getTime(),
       highestBidder: null,
     });
 
     await auctionQueue.add(
       'auction-expired',
-      { auctionId: auction.id, auctionTitle: auction.title },
-      { delay: 5 * 60 * 1000, jobId: `expiry-${auction.id}-${Date.now()}` }
+      { auctionId: dbAuction.id, auctionTitle: dbAuction.title },
+      { delay: 5 * 60 * 1000, jobId: `expiry-${dbAuction.id}-${Date.now()}` }
     );
 
-    console.log(`Scheduled expiry job for: ${auction.title}`);
+    console.log(`Scheduled expiry job for: ${dbAuction.title} (${dbAuction.id})`);
   }
 }
 
