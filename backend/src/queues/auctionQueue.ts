@@ -7,10 +7,20 @@ interface AuctionExpiredJob {
   auctionTitle: string;
 }
 
-const connection = {
-  host: 'localhost',
-  port: 6380,
-};
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6380';
+
+// BullMQ needs host/port format, not URL — parse it
+function parseRedisUrl(url: string) {
+  const parsed = new URL(url);
+  return {
+    host: parsed.hostname,
+    port: Number(parsed.port) || 6379,
+    password: parsed.password || undefined,
+    username: parsed.username || undefined,
+  };
+}
+
+const connection = parseRedisUrl(redisUrl);
 
 export const auctionQueue = new Queue('auction-expiry', { connection });
 

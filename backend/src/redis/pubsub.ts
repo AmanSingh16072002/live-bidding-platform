@@ -1,14 +1,9 @@
 import Redis from 'ioredis';
 
-export const publisher = new Redis({
-  host: 'localhost',
-  port: 6380,
-});
+const redisUrl = process.env.REDIS_URL || 'redis://localhost:6380';
 
-export const subscriber = new Redis({
-  host: 'localhost',
-  port: 6380,
-});
+export const publisher  = new Redis(redisUrl);
+export const subscriber = new Redis(redisUrl);
 
-publisher.on('error', (err: Error) => console.error('Redis publisher error:', err));
+publisher.on('error',  (err: Error) => console.error('Redis publisher error:', err));
 subscriber.on('error', (err: Error) => console.error('Redis subscriber error:', err));
